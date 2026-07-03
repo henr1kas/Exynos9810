@@ -1,0 +1,4 @@
+bl/*
+sboot/*
+!sboot/patch.py
+houston-pub
