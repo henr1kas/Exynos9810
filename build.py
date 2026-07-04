@@ -16,8 +16,8 @@ IMAGES = [
 ]
 
 for image in IMAGES:
-    subprocess.run([sys.executable, "sign.py", image, "keys"], check=True)
+    subprocess.run([sys.executable, "sign.py", image, sys.argv[1]], check=True)
 
 # TODO: N10L avbfooter
-subprocess.run([sys.executable, "merge.py", "sboot"], check=True)
-subprocess.run([sys.executable, "sign.py", "bl/sboot.bin", "keys"], check=True)
+subprocess.run([sys.executable, "scripts/merge.py",  sys.argv[2], sys.argv[3]], check=True)
+subprocess.run([sys.executable, "sign.py", sys.argv[3], sys.argv[1]], check=True)

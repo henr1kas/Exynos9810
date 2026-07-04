@@ -21,5 +21,5 @@ for name in FILES:
     if os.path.exists(path):
         with open(path, "rb") as f:
             out.extend(f.read())
-with open("bl/sboot.bin", "wb") as f:
+with open(sys.argv[2], "wb") as f:
     f.write(out)

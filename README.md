@@ -22,7 +22,7 @@ bl/sboot.bin
 ## 2. Split `sboot.bin`
 
 ```bash
-python split.py bl/sboot.bin
+python scripts/split.py bl/sboot.bin sboot
 ```
 
 This extracts the individual components of `sboot.bin` into a working `sboot/` directory.
@@ -53,7 +53,7 @@ Once `patch.py` has been run (with or without the flag), rename the output to `u
 ## 4. Build the Signed `sboot.bin`
 
 ```bash
-python build.py
+python build.py keys sboot bl/sboot.bin
 ```
 
 This re-signs the files in `bl/` and the `sboot/` components, and produces a new, properly signed `sboot.bin`.

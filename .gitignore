@@ -2,3 +2,4 @@ bl/*
 sboot/*
 !sboot/patch.py
 houston-pub
+scripts/__pycache__
