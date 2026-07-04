@@ -78,9 +78,9 @@ def get_efuse_data():
     RSA_MOD_SIZE = 0x100
     RSA_EXP_SIZE = 0x4
 
-    with open("../keys/st1.pem", "rb") as f:
+    with open("keys/st1.pem", "rb") as f:
         priv_bytes = f.read()
-    with open("../keys/hmac.bin", "rb") as f:
+    with open("keys/hmac.bin", "rb") as f:
         hmac_key = f.read()
 
     key = serialization.load_pem_private_key(priv_bytes, password=None)
