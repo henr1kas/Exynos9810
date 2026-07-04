@@ -14,8 +14,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from sbl1 import SBL1
+from st2 import ST2
 
-RSA_SIG_SIZE = 0x100
 RSA_MOD_SIZE = 0x100
 RSA_EXP_SIZE = 0x4
 
@@ -79,7 +79,7 @@ def load_json_into_struct(sbl1, j):
         else:
             setattr(sbl1, name, val)
 
-def sign_fwbl1(data, json_path, st1_privatekey, st2_publickey, hmac_key):
+def sign_st1(data, json_path, st1_privatekey, st2_publickey, hmac_key, rb_count):
     if len(data) != ctypes.sizeof(SBL1):
         raise ValueError(f"fwbl1.bin must be 0x{ctypes.sizeof(SBL1):X} bytes")
  
@@ -90,6 +90,8 @@ def sign_fwbl1(data, json_path, st1_privatekey, st2_publickey, hmac_key):
     st1_publickey = pubkey_blob(st1_privatekey.public_key())
     sbl1.checksum = 0
     sbl1.time = int(time.time())
+    if rb_count is not None:
+        sbl1.rb_count = rb_count
     sbl1.st2_publickey[:] = st2_publickey
     sbl1.st1_publickey[:] = st1_publickey
     sbl1.hmac[:] = hmac.digest(hmac_key, st1_publickey, "sha256")
@@ -97,12 +99,15 @@ def sign_fwbl1(data, json_path, st1_privatekey, st2_publickey, hmac_key):
     sbl1.checksum = int.from_bytes(header_digest(bytes(sbl1)), "little")
     return bytes(sbl1)
 
-def sign_compact(name, data, stage2_key):
+def sign_st2(name, data, st2_privatekey, rb_count):
     buf = bytearray(data)
-    sig_off = len(buf) - RSA_SIG_SIZE
+    sig_off = len(buf) - 0x100
     if name == "bl31.bin":
         buf[4:8] = bytes(4)
-    buf[sig_off:] = sign_pss(stage2_key, bytes(buf[:sig_off]))
+    footer = ST2.from_buffer(memoryview(buf)[len(buf) - ctypes.sizeof(ST2):])
+    if rb_count is not None:
+        footer.rb_count = rb_count
+    buf[sig_off:] = sign_pss(st2_privatekey, bytes(buf[:sig_off]))
     if name == "bl31.bin":
         buf[4:8] = header_digest(buf)
     return bytes(buf)
@@ -112,6 +117,7 @@ if __name__ == "__main__":
     ap.add_argument("input_file", help="Path to the image to sign")
     ap.add_argument("keys_dir",  help="Directory containing the signing keys")
     ap.add_argument("sbl1_json", help="sbl1.json file containing sig info")
+    ap.add_argument("rb_count", nargs="?", default=None, type=int, help="Override rb_count of images")
     args = ap.parse_args()
 
     src = Path(args.input_file)
@@ -123,7 +129,7 @@ if __name__ == "__main__":
 
     data = src.read_bytes()
     if src.name == "fwbl1.bin":
-        signed = sign_fwbl1(data, args.sbl1_json, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key)
+        signed = sign_st1(data, args.sbl1_json, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key, args.rb_count)
     else:
-        signed = sign_compact(src.name, data, st2_privatekey)
+        signed = sign_st2(src.name, data, st2_privatekey, args.rb_count)
     src.write_bytes(signed)

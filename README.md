@@ -49,10 +49,12 @@ If you don't want fusing to happen, leave this flag untouched (default) and simp
 ## 4. Build the Signed `sboot.bin`
 
 ```bash
-python scripts/build.py keys sboot bl
+python scripts/build.py keys sboot bl [rb_count]
 ```
 
 This re-signs the files in `bl/` and the `sboot/` components, and produces a new, properly signed `sboot.bin`.
+
+`rb_count` is optional. If provided, it overrides the rollback counter in the signed images. If omitted, the existing rollback counter value is preserved.
 
 ## 5. Boot with the Custom Key
 

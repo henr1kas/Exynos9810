@@ -116,6 +116,9 @@ if __name__ == "__main__":
     with open(sys.argv[1], "rb") as f:
         data = bytearray(f.read())
 
+    # TODO: investigate %s: usable! (%d:0x%x), warranty reason : (0x%04x) and (SYSTEM STATUS)
+    # not have_this_mode, idk what this is but on old BL of combination S9
+    #have_this_mode = resolve_bl(data, find_pattern(data, "? ? ? 94 ? ? ? 71 ? ? ? 54 ? ? ? 39"))
     have_this_mode = resolve_bl(data, find_pattern(data, "? ? ? 94 ? ? ? 35 ? ? ? B9 ? ? ? F0"))
     rmm_check = resolve_bl(data, find_pattern(data, "? ? ? 94 ? ? ? 37 ? ? ? 52 ? ? ? 94 ? ? ? 34"))    
     kg_check = resolve_bl(data, find_pattern(data, "94 ? 40 F9 E0 03 14 AA", -12))
