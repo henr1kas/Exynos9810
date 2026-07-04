@@ -62,6 +62,39 @@ def patch_kg(data, kg_check):
     ]
     write_words(data, kg_check, ret0)
 
+def patch_engmode(data, have_this_mode):
+    ret1 = [
+        0xD2800020,
+        0xD65F03C0,
+    ]
+    write_words(data, have_this_mode, ret1)
+
+def get_efuse_data():
+    import hmac
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    RSA_MOD_SIZE = 0x100
+    RSA_EXP_SIZE = 0x4
+
+    with open("../keys/st1.pem", "rb") as f:
+        priv_bytes = f.read()
+    with open("../keys/hmac.bin", "rb") as f:
+        hmac_key = f.read()
+
+    key = serialization.load_pem_private_key(priv_bytes, password=None)
+    if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != RSA_MOD_SIZE * 8:
+        raise ValueError(f"Expected RSA-{RSA_MOD_SIZE * 8} private key: st1.pem")
+    if len(hmac_key) != hashes.SHA256.digest_size:
+        raise ValueError("hmac.bin should be 32 bytes")
+    n = key.public_key().public_numbers()
+    public_blob = struct.pack(
+        f"<I{RSA_MOD_SIZE}sI{RSA_EXP_SIZE}s",
+        RSA_MOD_SIZE, n.n.to_bytes(RSA_MOD_SIZE, "little"),
+        RSA_EXP_SIZE, n.e.to_bytes(RSA_EXP_SIZE, "little"),
+    )
+    return bytes(a ^ b for a, b in zip(hmac.digest(hmac_key, public_blob, "sha256"), hmac_key))
+
 def patch_fuse_boot_key(data, kg_check, cm_otp_write_rom_sec_boot_key, cm_otp_write_use_rom_sec_boot_key):
     payload = [
         0xA9BF7BFD,
@@ -73,19 +106,8 @@ def patch_fuse_boot_key(data, kg_check, cm_otp_write_rom_sec_boot_key, cm_otp_wr
         0xA8C17BFD,
         0xD65F03C0,
     ]
-    with open("../keys/key.efuse", "rb") as f:
-        key = f.read()
-    if len(key) != 32:
-        raise ValueError(f"Expected 32-byte key, got {len(key)} bytes")
-    payload.extend(struct.unpack("<8I", key))
+    payload.extend(struct.unpack("<8I", get_efuse_data()))
     write_words(data, kg_check, payload)
-
-def patch_engmode(data, have_this_mode):
-    ret1 = [
-        0xD2800020,
-        0xD65F03C0,
-    ]
-    write_words(data, have_this_mode, ret1)
 
 should_fuse_key = False # if True will burn BOOT_KEY once you UFS boot to ODIN MODE
 

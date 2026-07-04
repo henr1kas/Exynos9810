@@ -11,9 +11,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 RSA_SIG_SIZE    = 0x100
-RSA_PUBKEY_SIZE = 0x10C
 RSA_MOD_SIZE    = 0x100
 RSA_EXP_SIZE    = 0x4
+RSA_PUBKEY_SIZE = 4 + RSA_MOD_SIZE + 4 + RSA_EXP_SIZE
 PSS_SALT_SIZE   = 0x20
 
 FWBL1_SIZE          = 0x2000
@@ -28,28 +28,26 @@ FWBL1_SIG_OFF        = 0x300
 COMPACT_FOOTER_SIZE = 0x110
 
 def u32(v): return struct.pack("<I", v)
-def rd32(b, o): return struct.unpack_from("<I", b, o)[0]
 
 def load_private_key(path):
     key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
     if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != RSA_MOD_SIZE * 8:
-        raise ValueError(f"Expected RSA-2048 private key: {path}")
+        raise ValueError(f"Expected RSA-{RSA_MOD_SIZE * 8} private key: {path}")
     return key
 
 def pubkey_blob(pub):
     n = pub.public_numbers()
-    return (u32(RSA_MOD_SIZE)
-            + n.n.to_bytes(RSA_MOD_SIZE, "little")
-            + u32(RSA_EXP_SIZE)
-            + n.e.to_bytes(RSA_EXP_SIZE, "little"))
+    return struct.pack(
+        f"<I{RSA_MOD_SIZE}sI{RSA_EXP_SIZE}s",
+        RSA_MOD_SIZE, n.n.to_bytes(RSA_MOD_SIZE, "little"),
+        RSA_EXP_SIZE, n.e.to_bytes(RSA_EXP_SIZE, "little"),
+    )
 
 def sign_pss(key, data):
-    sig = key.sign(data, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=PSS_SALT_SIZE), hashes.SHA256())
-    return sig[::-1]  # little-endian
+    return key.sign(data, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=PSS_SALT_SIZE), hashes.SHA256())[::-1]
 
-def header_digest(data):   return hashlib.sha256(bytes(data[0x10:])).digest()
-def clear_digest(buf):     buf[4:8] = b"\x00" * 4
-def update_digest(buf):    buf[4:8] = header_digest(buf)[:4]
+def header_digest(data):
+    return hashlib.sha256(data[0x10:]).digest()
 
 def sign_fwbl1(data, bl1_key, stage2_pub_blob, hmac_key):
     if len(data) != FWBL1_SIZE:
@@ -60,8 +58,8 @@ def sign_fwbl1(data, bl1_key, stage2_pub_blob, hmac_key):
     bl1_pub = pubkey_blob(bl1_key.public_key())
     auth_hash = hmac.digest(hmac_key, bl1_pub, "sha256")
 
-    buf[0:4]   = u32(len(buf) // 512)
-    clear_digest(buf)
+    buf[0:4] = u32(len(buf) // 512)
+    buf[4:8] = bytes(4)
     buf[fo:fo+4]   = u32(4)
     buf[fo+4:fo+8] = b"SLSI"
     buf[fo+8:fo+16] = int(time.time()).to_bytes(8, "little")
@@ -74,7 +72,7 @@ def sign_fwbl1(data, bl1_key, stage2_pub_blob, hmac_key):
 
     sig = sign_pss(bl1_key, bytes(buf[:fo + FWBL1_SIGNED_PREFIX]))
     buf[fo+FWBL1_SIG_OFF : fo+FWBL1_SIG_OFF+RSA_SIG_SIZE] = sig
-    update_digest(buf)
+    buf[4:8] = header_digest(buf)[:4]
     return bytes(buf)
 
 def sign_compact(name, data, stage2_key):
@@ -83,10 +81,10 @@ def sign_compact(name, data, stage2_key):
     buf = bytearray(data)
     sig_off = len(buf) - RSA_SIG_SIZE
     if name == "bl31.bin":
-        clear_digest(buf)
+        buf[4:8] = bytes(4)
     buf[sig_off:] = sign_pss(stage2_key, bytes(buf[:sig_off]))
     if name == "bl31.bin":
-        update_digest(buf)
+        buf[4:8] = header_digest(buf)[:4]
     return bytes(buf)
 
 if __name__ == "__main__":
@@ -96,16 +94,15 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     src = Path(args.input_file)
-    keys  = Path(args.keys_dir)
+    keys = Path(args.keys_dir)
 
-    bl1_key    = load_private_key(keys / "key_private.pem")
-    stage2_key = load_private_key(keys / "key_stage2_private.pem")
-    stage2_pub = (keys / "key_stage2_pubkey.bin").read_bytes()
-    hmac_key   = (keys / "key.hmac_key").read_bytes()
+    bl1_key = load_private_key(keys / "st1.pem")
+    stage2_key = load_private_key(keys / "st2.pem")
+    hmac_key = (keys / "hmac.bin").read_bytes()
 
     data = src.read_bytes()
     if src.name == "fwbl1.bin":
-        signed = sign_fwbl1(data, bl1_key, stage2_pub, hmac_key)
+        signed = sign_fwbl1(data, bl1_key, pubkey_blob(stage2_key.public_key()), hmac_key)
     else:
         signed = sign_compact(src.name, data, stage2_key)
     src.write_bytes(signed)
