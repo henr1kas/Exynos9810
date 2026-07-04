@@ -29,13 +29,11 @@ This extracts the individual components of `sboot.bin` into a working `sboot/` d
 
 ## 3. Patch `u-boot.bin`
 
-Run the patch script from inside the `sboot/` directory:
+Run the patch script:
 
 ```bash
-python patch.py
+python scripts/patch.py sboot/u-boot.bin
 ```
-
-This produces a patched `u-boot.bin`.
 
 **Optional — enable key fusing:**
 If you want the patched `sboot.bin` to fuse a custom `SEC_BOOT_KEY` when it later boots from UFS and enters download mode, open `patch.py` *before* running it and set:
@@ -48,12 +46,10 @@ If you don't want fusing to happen, leave this flag untouched (default) and simp
 
 > ⚠️ **Warning:** Fusing `SEC_BOOT_KEY` is a **one-way, irreversible operation**. Once fused, the device will permanently require boot images signed with your custom key, and this cannot be undone. Only set `should_fuse_key = True` if you fully understand the implications and have verified your setup on a device you are prepared to lose if something goes wrong.
 
-Once `patch.py` has been run (with or without the flag), rename the output to `u-boot.bin`.
-
 ## 4. Build the Signed `sboot.bin`
 
 ```bash
-python build.py keys sboot bl/sboot.bin
+python scripts/build.py keys sboot bl
 ```
 
 This re-signs the files in `bl/` and the `sboot/` components, and produces a new, properly signed `sboot.bin`.

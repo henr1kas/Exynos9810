@@ -1,5 +1,4 @@
-bl/*
-sboot/*
-!sboot/patch.py
+bl
 houston-pub
+sboot
 scripts/__pycache__

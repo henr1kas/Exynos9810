@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import re
+import sys
 import struct
 
 def write_u32(data, offset, value):
@@ -112,7 +113,7 @@ def patch_fuse_boot_key(data, kg_check, cm_otp_write_rom_sec_boot_key, cm_otp_wr
 should_fuse_key = False # if True will burn BOOT_KEY once you UFS boot to ODIN MODE
 
 if __name__ == "__main__":
-    with open("u-boot.bin", "rb") as f:
+    with open(sys.argv[1], "rb") as f:
         data = bytearray(f.read())
 
     have_this_mode = resolve_bl(data, find_pattern(data, "? ? ? 94 ? ? ? 35 ? ? ? B9 ? ? ? F0"))
@@ -170,5 +171,5 @@ if __name__ == "__main__":
             if cm_otp_write_use_rom_sec_boot_key is None:
                 print("WARNING: cm_otp_write_use_rom_sec_boot_key function not found!")
 
-    with open("u-boot.patched.bin", "wb") as f:
+    with open(sys.argv[1], "wb") as f:
         f.write(data)
