@@ -8,12 +8,11 @@ import struct
 import time
 import ctypes
 import json
-from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from sbl1 import SBL1
+from sbl1 import SBL1, load_sbl1_json_into_struct
 from st2 import ST2
 
 RSA_MOD_SIZE = 0x100
@@ -41,28 +40,6 @@ def sign_pss(key, data):
 def header_digest(data):
     return hashlib.sha256(data[0x10:]).digest()[:4]
 
-def load_json_into_struct(sbl1, j):
-    if all(k in j for k in ("evt", "soc", "timestamp")):
-        if "." in j["evt"]:
-            major, minor = j["evt"].split(".")
-            evt_hex = f"{int(major):02x}{int(minor):02x}"
-        else:
-            evt_hex = f"{int(j["evt"]):x}"
-        sbl1.soc_info[:] = int(f"{j["soc"]:04d}{evt_hex}", 16).to_bytes(4, byteorder="little") + int(datetime.fromtimestamp(j["timestamp"], tz=timezone.utc).strftime("%y%m%d%H"), 16).to_bytes(4, "little")
- 
-    for name, ctype in sbl1._fields_:
-        if name in ("image", "soc_info") or name not in j:
-            continue
-        val = j[name]
-        if name == "ap_info":
-            sbl1.ap_info = val.encode()
-            continue
-        cur = getattr(sbl1, name)
-        if isinstance(cur, ctypes.Array):
-            cur[:] = bytes.fromhex(val)
-        else:
-            setattr(sbl1, name, val)
-
 def sign_st1(data, st1_privatekey, st2_publickey, hmac_key, rb_count, json_path):
     if len(data) != ctypes.sizeof(SBL1):
         raise ValueError(f"fwbl1.bin must be 0x{ctypes.sizeof(SBL1):X} bytes")
@@ -70,7 +47,7 @@ def sign_st1(data, st1_privatekey, st2_publickey, hmac_key, rb_count, json_path)
     sbl1 = SBL1.from_buffer(data)
     with open(json_path) as f:
         j = json.load(f)
-    load_json_into_struct(sbl1, j)
+    load_sbl1_json_into_struct(sbl1, j)
  
     st1_publickey = pubkey_blob(st1_privatekey.public_key())
     sbl1.checksum = 0
