@@ -2,24 +2,15 @@
 
 import os
 import sys
+from s5e9810 import soc_data
 
-FILES = [
-    "fwbl1.bin",
-    "bl31.bin",
-    "bl2.bin",
-    "pad.bin",
-    "u-boot.bin",
-    "el3_mon.bin",
-    "secure_payload.bin",
-    "signerv2.bin",
-    "avb.bin" # only n10lite
-]
+sboot_size = os.path.getsize(sys.argv[2])
+soc = soc_data(sboot_size)
 
 out = bytearray()
-for name in FILES:
-    path = os.path.join(sys.argv[1], name)
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            out.extend(f.read())
+for image in soc.sboot:
+    with open(os.path.join(sys.argv[1], image.name), "rb") as f:
+        out.extend(f.read())
+
 with open(sys.argv[2], "wb") as f:
     f.write(out)
