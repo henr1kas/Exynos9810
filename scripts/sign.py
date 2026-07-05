@@ -41,13 +41,11 @@ def header_digest(data):
     return hashlib.sha256(data[0x10:]).digest()[:4]
 
 def sign_st1(data, st1_privatekey, st2_publickey, hmac_key, rb_count, json_path):
-    if len(data) != ctypes.sizeof(SBL1):
-        raise ValueError(f"fwbl1.bin must be 0x{ctypes.sizeof(SBL1):X} bytes")
- 
     sbl1 = SBL1.from_buffer(data)
-    with open(json_path) as f:
-        j = json.load(f)
-    load_sbl1_json_into_struct(sbl1, j)
+    if json_path is not None:
+        with open(json_path) as f:
+            j = json.load(f)
+        load_sbl1_json_into_struct(sbl1, j)
  
     st1_publickey = pubkey_blob(st1_privatekey.public_key())
     sbl1.checksum = 0
@@ -75,9 +73,11 @@ def sign_st2(data, st2_privatekey, rb_count, update_header):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Exynos CodeSigner comaptible v4, RSA-PSS")
     ap.add_argument("input_file", help="Path to the image to sign")
-    ap.add_argument("keys_dir",  help="Directory containing the signing keys")
-    ap.add_argument("sbl1_json", help="sbl1.json file containing BL1 sig info")
-    ap.add_argument("rb_count", nargs="?", default=None, type=int, help="Override rb_count of images")
+    ap.add_argument("keys_dir",  help="Directory containing the signing keys (hmac.bin, st1.pem, st2.pem)")
+    ap.add_argument("stage", choices=["st1", "st2"], help="Signing stage")
+    ap.add_argument("--sbl1-json", help="sbl1.json file containing BL1 signature information (ST1 only)")
+    ap.add_argument("--update-header", action="store_true", help="Image requires updated header checksum (ST2 only)")
+    ap.add_argument("--rb-count", type=int, default=None, help="Override rb_count of image")
     args = ap.parse_args()
 
     st1_privatekey = load_private_key(os.path.join(args.keys_dir, "st1.pem"))
@@ -91,9 +91,11 @@ if __name__ == "__main__":
         f.readinto(data)
 
     name = os.path.basename(args.input_file)
-    if name == "fwbl1.bin":
+    if args.stage == "st1":
+        if args.sbl1_json is None:
+            print("sbl1.json not given, will use info from image.")
         signed = sign_st1(data, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key, args.rb_count, args.sbl1_json)
     else:
-        signed = sign_st2(data, st2_privatekey, args.rb_count, name == "bl31.bin")
+        signed = sign_st2(data, st2_privatekey, args.rb_count, args.update_header)
     with open(args.input_file, "wb") as f:
         f.write(signed)
