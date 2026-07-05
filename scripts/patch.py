@@ -72,28 +72,14 @@ def patch_engmode(data, have_this_mode):
 
 def get_efuse_data():
     import hmac
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
+    from sign import load_private_key, pubkey_blob
 
-    RSA_MOD_SIZE = 0x100
-    RSA_EXP_SIZE = 0x4
-
-    with open("keys/st1.pem", "rb") as f:
-        priv_bytes = f.read()
     with open("keys/hmac.bin", "rb") as f:
         hmac_key = f.read()
-
-    key = serialization.load_pem_private_key(priv_bytes, password=None)
-    if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != RSA_MOD_SIZE * 8:
-        raise ValueError(f"Expected RSA-{RSA_MOD_SIZE * 8} private key: st1.pem")
-    if len(hmac_key) != hashes.SHA256.digest_size:
+    if len(hmac_key) != 32:
         raise ValueError("hmac.bin should be 32 bytes")
-    n = key.public_key().public_numbers()
-    public_blob = struct.pack(
-        f"<I{RSA_MOD_SIZE}sI{RSA_EXP_SIZE}s",
-        RSA_MOD_SIZE, n.n.to_bytes(RSA_MOD_SIZE, "little"),
-        RSA_EXP_SIZE, n.e.to_bytes(RSA_EXP_SIZE, "little"),
-    )
+    key = load_private_key("keys/st1.pem")
+    public_blob = pubkey_blob(key.public_key())
     return bytes(a ^ b for a, b in zip(hmac.digest(hmac_key, public_blob, "sha256"), hmac_key))
 
 def patch_fuse_boot_key(data, kg_check, cm_otp_write_rom_sec_boot_key, cm_otp_write_use_rom_sec_boot_key):

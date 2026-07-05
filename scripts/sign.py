@@ -3,9 +3,9 @@
 import argparse
 import hashlib
 import hmac
+import os
 import struct
 import time
-from pathlib import Path
 import ctypes
 import json
 from datetime import datetime, timezone
@@ -20,7 +20,9 @@ RSA_MOD_SIZE = 0x100
 RSA_EXP_SIZE = 0x4
 
 def load_private_key(path):
-    key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+    with open(path, "rb") as f:
+        pem = f.read()
+    key = serialization.load_pem_private_key(pem, password=None)
     if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != RSA_MOD_SIZE * 8:
         raise ValueError(f"Expected RSA-{RSA_MOD_SIZE * 8} private key: {path}")
     return key
@@ -79,12 +81,13 @@ def load_json_into_struct(sbl1, j):
         else:
             setattr(sbl1, name, val)
 
-def sign_st1(data, json_path, st1_privatekey, st2_publickey, hmac_key, rb_count):
+def sign_st1(data, st1_privatekey, st2_publickey, hmac_key, rb_count, json_path):
     if len(data) != ctypes.sizeof(SBL1):
         raise ValueError(f"fwbl1.bin must be 0x{ctypes.sizeof(SBL1):X} bytes")
  
-    sbl1 = SBL1.from_buffer_copy(data) # will only keep image field from fwbl1.bin, rest from json
-    j = json.loads(Path(json_path).read_text())
+    sbl1 = SBL1.from_buffer(data)
+    with open(json_path) as f:
+        j = json.load(f)
     load_json_into_struct(sbl1, j)
  
     st1_publickey = pubkey_blob(st1_privatekey.public_key())
@@ -95,41 +98,43 @@ def sign_st1(data, json_path, st1_privatekey, st2_publickey, hmac_key, rb_count)
     sbl1.st2_publickey[:] = st2_publickey
     sbl1.st1_publickey[:] = st1_publickey
     sbl1.hmac[:] = hmac.digest(hmac_key, st1_publickey, "sha256")
-    sbl1.signature[:] = sign_pss(st1_privatekey, bytes(sbl1)[:SBL1.st1_publickey.offset])
-    sbl1.checksum = int.from_bytes(header_digest(bytes(sbl1)), "little")
-    return bytes(sbl1)
+    sbl1.signature[:] = sign_pss(st1_privatekey, memoryview(data)[:SBL1.st1_publickey.offset])
+    sbl1.checksum = int.from_bytes(header_digest(data), "little")
+    return data
 
-def sign_st2(name, data, st2_privatekey, rb_count):
-    buf = bytearray(data)
-    sig_off = len(buf) - 0x100
-    if name == "bl31.bin":
-        buf[4:8] = bytes(4)
-    footer = ST2.from_buffer(memoryview(buf)[len(buf) - ctypes.sizeof(ST2):])
+def sign_st2(data, st2_privatekey, rb_count, update_header):
+    if update_header:
+        data[4:8] = bytes(4)
+    footer = ST2.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2):])
     if rb_count is not None:
         footer.rb_count = rb_count
-    buf[sig_off:] = sign_pss(st2_privatekey, bytes(buf[:sig_off]))
-    if name == "bl31.bin":
-        buf[4:8] = header_digest(buf)
-    return bytes(buf)
+    footer.signature[:] = sign_pss(st2_privatekey, memoryview(data)[:len(data) - 0x100])
+    if update_header:
+        data[4:8] = header_digest(data)
+    return data
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Sign Exynos9810 images")
+    ap = argparse.ArgumentParser(description="Exynos CodeSigner comaptible v4, RSA-PSS")
     ap.add_argument("input_file", help="Path to the image to sign")
     ap.add_argument("keys_dir",  help="Directory containing the signing keys")
-    ap.add_argument("sbl1_json", help="sbl1.json file containing sig info")
+    ap.add_argument("sbl1_json", help="sbl1.json file containing BL1 sig info")
     ap.add_argument("rb_count", nargs="?", default=None, type=int, help="Override rb_count of images")
     args = ap.parse_args()
 
-    src = Path(args.input_file)
-    keys = Path(args.keys_dir)
+    st1_privatekey = load_private_key(os.path.join(args.keys_dir, "st1.pem"))
+    st2_privatekey = load_private_key(os.path.join(args.keys_dir, "st2.pem"))
+    with open(os.path.join(args.keys_dir, "hmac.bin"), "rb") as f:
+        hmac_key = f.read()
 
-    st1_privatekey = load_private_key(keys / "st1.pem")
-    st2_privatekey = load_private_key(keys / "st2.pem")
-    hmac_key = (keys / "hmac.bin").read_bytes()
+    with open(args.input_file, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
+        data = bytearray(size)
+        f.readinto(data)
 
-    data = src.read_bytes()
-    if src.name == "fwbl1.bin":
-        signed = sign_st1(data, args.sbl1_json, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key, args.rb_count)
+    name = os.path.basename(args.input_file)
+    if name == "fwbl1.bin":
+        signed = sign_st1(data, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key, args.rb_count, args.sbl1_json)
     else:
-        signed = sign_st2(src.name, data, st2_privatekey, args.rb_count)
-    src.write_bytes(signed)
+        signed = sign_st2(data, st2_privatekey, args.rb_count, name == "bl31.bin")
+    with open(args.input_file, "wb") as f:
+        f.write(signed)
