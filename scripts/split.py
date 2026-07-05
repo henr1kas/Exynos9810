@@ -7,25 +7,6 @@ import os
 import sys
 from sbl1 import SBL1
 
-def bcd_nibbles_to_int(value, start_nibble, num_digits):
-    result = 0
-    for i in range(num_digits):
-        shift = 4 * (start_nibble + num_digits - 1 - i)
-        nibble = (value >> shift) & 0xF
-        result = result * 10 + nibble
-    return result
-
-def bcd_to_int(b):
-    return ((b >> 4) * 10) + (b & 0xF)
-
-def parse_bcd_timestamp(val):
-    year = bcd_to_int((val >> 24) & 0xFF) + 2000
-    month = bcd_to_int((val >> 16) & 0xFF)
-    day = bcd_to_int((val >> 8) & 0xFF)
-    hour = bcd_to_int(val & 0xFF)
-    dt = datetime(year, month, day, hour, tzinfo=timezone.utc)
-    return int(dt.timestamp())
-
 def struct_to_dict(s):
     out = {}
     for name, ctype in s._fields_:
@@ -34,9 +15,13 @@ def struct_to_dict(s):
         val = getattr(s, name)
         if name == "soc_info":
             v = int.from_bytes(bytes(val[0:4]), "little")
-            out["evt"] = bcd_nibbles_to_int(v, 0, 1)
-            out["soc"] = bcd_nibbles_to_int(v, 1, 4)
-            out["timestamp"] = parse_bcd_timestamp(int.from_bytes(bytes(val[4:8]), "little"))
+            t = int.from_bytes(bytes(val[4:8]), "little")
+            hex_str = f"{v:x}"
+            out["evt"] = hex_str[4:]
+            out["soc"] = hex_str[:4]
+            h = f"{t:08x}"
+            dt = datetime(year=2000 + int(h[0:2]), month=int(h[2:4]), day=int(h[4:6]), hour=int(h[6:8]), tzinfo=timezone.utc)
+            out["timestamp"] = int(dt.timestamp())
         elif isinstance(val, ctypes.Array):
             out[name] = bytes(val).hex()
         elif isinstance(val, bytes):

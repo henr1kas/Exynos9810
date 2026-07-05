@@ -41,32 +41,9 @@ def sign_pss(key, data):
 def header_digest(data):
     return hashlib.sha256(data[0x10:]).digest()[:4]
 
-def int_to_bcd(v):
-    return ((v // 10) << 4) | (v % 10)
- 
-def int_to_bcd_nibbles(value, start_nibble, num_digits):
-    v = 0
-    tmp = value
-    for i in range(num_digits):
-        digit = tmp % 10
-        tmp //= 10
-        v |= (digit & 0xF) << (4 * (start_nibble + i))
-    return v
- 
-def build_soc_info(evt, soc, timestamp):
-    word = int_to_bcd_nibbles(evt, 0, 1) | int_to_bcd_nibbles(soc, 1, 4)
-    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-    ts_val = (
-        (int_to_bcd(dt.year - 2000) << 24)
-        | (int_to_bcd(dt.month) << 16)
-        | (int_to_bcd(dt.day) << 8)
-        | int_to_bcd(dt.hour)
-    )
-    return word.to_bytes(4, "little") + ts_val.to_bytes(4, "little")
-
 def load_json_into_struct(sbl1, j):
     if all(k in j for k in ("evt", "soc", "timestamp")):
-        sbl1.soc_info[:] = build_soc_info(j["evt"], j["soc"], j["timestamp"])
+        sbl1.soc_info[:] = int(j["soc"] + j["evt"], 16).to_bytes(4, "little") + int(datetime.fromtimestamp(j["timestamp"], tz=timezone.utc).strftime("%y%m%d%H"), 16).to_bytes(4, "little")
  
     for name, ctype in sbl1._fields_:
         if name in ("image", "soc_info") or name not in j:
