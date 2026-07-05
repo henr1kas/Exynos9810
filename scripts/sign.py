@@ -43,7 +43,12 @@ def header_digest(data):
 
 def load_json_into_struct(sbl1, j):
     if all(k in j for k in ("evt", "soc", "timestamp")):
-        sbl1.soc_info[:] = int(j["soc"] + j["evt"], 16).to_bytes(4, "little") + int(datetime.fromtimestamp(j["timestamp"], tz=timezone.utc).strftime("%y%m%d%H"), 16).to_bytes(4, "little")
+        if "." in j["evt"]:
+            major, minor = j["evt"].split(".")
+            evt_hex = f"{int(major):02x}{int(minor):02x}"
+        else:
+            evt_hex = f"{int(j["evt"]):x}"
+        sbl1.soc_info[:] = int(f"{j["soc"]:04d}{evt_hex}", 16).to_bytes(4, byteorder="little") + int(datetime.fromtimestamp(j["timestamp"], tz=timezone.utc).strftime("%y%m%d%H"), 16).to_bytes(4, "little")
  
     for name, ctype in sbl1._fields_:
         if name in ("image", "soc_info") or name not in j:

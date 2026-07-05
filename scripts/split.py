@@ -17,8 +17,11 @@ def struct_to_dict(s):
             v = int.from_bytes(bytes(val[0:4]), "little")
             t = int.from_bytes(bytes(val[4:8]), "little")
             hex_str = f"{v:x}"
-            out["evt"] = hex_str[4:]
-            out["soc"] = hex_str[:4]
+            evt_str = hex_str[4:]
+            if len(evt_str) == 4:
+                evt_str = f"{int(evt_str[:2], 16)}.{int(evt_str[2:], 16)}"
+            out["evt"] = evt_str
+            out["soc"] = int(hex_str[:4])
             h = f"{t:08x}"
             dt = datetime(year=2000 + int(h[0:2]), month=int(h[2:4]), day=int(h[4:6]), hour=int(h[6:8]), tzinfo=timezone.utc)
             out["timestamp"] = int(dt.timestamp())
