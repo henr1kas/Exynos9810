@@ -84,7 +84,7 @@ def main():
 
     if is_sparse:
         print("sparse detected!")
-        if has_no_signer(data[0x328:0x332]):
+        if has_no_signer(data[0x328:0x332]) or len(sys.argv) == 4:
             if len(sys.argv) == 4:
                 signer_info_if_null = signer
             else:
@@ -95,7 +95,8 @@ def main():
         msg = hashlib.sha256(data[0x328:]).digest()
         sig = sign(msg, priv_key)
     else:
-        if has_no_signer(data[-0x210:-0x206]):
+        no_signer = has_no_signer(data[-0x210:-0x206])
+        if no_signer or len(sys.argv) == 4:
             if len(sys.argv) == 4:
                 signer_info_if_null = signer
             else:
@@ -108,8 +109,9 @@ def main():
                 data = data[:sz]
                 seandroidenforce = bytes.fromhex("53 45 41 4E 44 52 4F 49 44 45 4E 46 4F 52 43 45")
                 data += seandroidenforce
-            data += signer_info_if_null
-            data += bytes(0x100)
+            if no_signer or is_bootimg:
+                data += bytes(0x210)
+            data[-0x210:-0x100] = signer_info_if_null
         msg = bytes(data[:-0x100])
         sig = sign(msg, priv_key)
         if did_expand:
