@@ -30,7 +30,7 @@ def get_signer_info_if_missing(data, filename):
         offset = -(0x210)
         f.seek(offset, os.SEEK_END)
         signer_info = bytearray(f.read(0x210))
-    signer_info[0x8C:0x8C+0x64] = filename.encode().ljust(0x64, b"\x00")
+    signer_info[0x9C:0x9C+0x64] = filename.encode().ljust(0x64, b"\x00")
     return signer_info
 
 # for bootimg
