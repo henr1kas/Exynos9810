@@ -95,9 +95,8 @@ def main():
                 seandroidenforce = bytes.fromhex("53 45 41 4E 44 52 4F 49 44 45 4E 46 4F 52 43 45")
                 data += seandroidenforce
             data += signer_info_if_null
-        else:
-            msg = bytes(data[:-0x100])
-            sig = sign(msg, priv_key)
+        msg = bytes(data[:-0x100])
+        sig = sign(msg, priv_key)
     if not did_expand:
         with open(filename, "r+b") as f:
             if is_sparse:
