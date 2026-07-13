@@ -17,10 +17,10 @@ def sign(msg, priv_key):
         hashes.SHA256(),
     )
 
-def get_signer_info_if_missing(data, filename):
-    signerver0 = bytes.fromhex("53 69 67 6E 65 72 56 65 72 30")
-    if data == signerver0:
-        return None
+def has_no_signer(data):
+    return data != bytes.fromhex("53 69 67 6E 65 72 56 65 72 30")
+
+def get_signer_info_if_missing():
     print("currently no signerver info, will take from sboot.bin")
     if not os.path.exists("sboot.bin"):
         print("place your device's sboot.bin in current dir and re-run script")
@@ -30,7 +30,6 @@ def get_signer_info_if_missing(data, filename):
         offset = -(0x210)
         f.seek(offset, os.SEEK_END)
         signer_info = bytearray(f.read(0x210))
-    signer_info[0x9C:0x9C+0x64] = filename.encode().ljust(0x64, b"\x00")
     return signer_info
 
 # for bootimg
@@ -49,8 +48,8 @@ def compute_min_size(data):
     return (num_header_pages + num_kernel_pages + num_ramdisk_pages + num_second_pages + num_dtb_pages)*page_size
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <file> <private_key.pem>")
+    if len(sys.argv) not in (3, 4):
+        print(f"Usage: {sys.argv[0]} <file> <private_key.pem> [signer.bin]")
         sys.exit(1)
 
     filename = sys.argv[1]
@@ -61,6 +60,13 @@ def main():
     if not os.path.exists(keyfile):
         print("key not found!")
         return
+    if len(sys.argv) == 4:
+        if not os.path.exists(sys.argv[3]):
+            print("signer file found!")
+            return
+        with open(sys.argv[3], "rb") as f:
+            signer = bytearray(os.fstat(f.fileno()).st_size)
+            f.readinto(signer)
     with open(keyfile, "rb") as f:
         priv_key = serialization.load_pem_private_key(
             f.read(),
@@ -78,15 +84,23 @@ def main():
 
     if is_sparse:
         print("sparse detected!")
-        signer_info_if_null = get_signer_info_if_missing(data[0x328:0x332], filename)
-        if signer_info_if_null is not None:
+        if has_no_signer(data[0x328:0x332]):
+            if len(sys.argv) == 4:
+                signer_info_if_null = signer
+            else:
+                signer_info_if_null = get_signer_info_if_missing()
+            signer_info_if_null[0x9C:0x9C+0x64] = filename.encode().ljust(0x64, b"\x00")
             signer_info_added = True
             data[0x328:0x428] = signer_info_if_null[:0x100]
         msg = hashlib.sha256(data[0x328:]).digest()
         sig = sign(msg, priv_key)
     else:
-        signer_info_if_null = get_signer_info_if_missing(data[-0x210:-0x206], filename)
-        if signer_info_if_null is not None:
+        if has_no_signer(data[-0x210:-0x206]):
+            if len(sys.argv) == 4:
+                signer_info_if_null = signer
+            else:
+                signer_info_if_null = get_signer_info_if_missing()
+            signer_info_if_null[0x9C:0x9C+0x64] = filename.encode().ljust(0x64, b"\x00")
             did_expand = True
             if is_bootimg:
                 print("bootimg detected!")
@@ -95,8 +109,11 @@ def main():
                 seandroidenforce = bytes.fromhex("53 45 41 4E 44 52 4F 49 44 45 4E 46 4F 52 43 45")
                 data += seandroidenforce
             data += signer_info_if_null
+            data += bytes(0x100)
         msg = bytes(data[:-0x100])
         sig = sign(msg, priv_key)
+        if did_expand:
+            data[-0x100:] = sig[::-1]
     if not did_expand:
         with open(filename, "r+b") as f:
             if is_sparse:
