@@ -112,16 +112,17 @@ if __name__ == "__main__":
     ap.add_argument("--update-header", action="store_true", help="Image requires updated header checksum (ST2 only)")
     ap.add_argument("--rb-count", type=int, default=None, help="Override rb_count of image")
     ap.add_argument("--signing-type", type=int, default=4, help="Type of signature to use")
-    ap.add_argument("--st2-key-type", type=int, default=0, help="0 = tee, 1 = ree")
+    ap.add_argument("--st2-key-type", type=int, default=0, help="V5 only. 0 = tee, 1 = ree")
     args = ap.parse_args()
 
+    key_dir = os.path.join(args.keys_dir, str(args.signing_type))
     st2_privatekeys = []
-    st1_privatekey = load_private_key(os.path.join(args.keys_dir, "st1.pem"), args.signing_type)
+    st1_privatekey = load_private_key(os.path.join(key_dir, "st1.pem"), args.signing_type)
     if args.signing_type == 0:
-        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2.pem"), args.signing_type))
+        st2_privatekeys.append(load_private_key(os.path.join(key_dir, "st2.pem"), args.signing_type))
     else:
-        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2t.pem"), args.signing_type))
-        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2r.pem"), args.signing_type))
+        st2_privatekeys.append(load_private_key(os.path.join(key_dir, "st2t.pem"), args.signing_type))
+        st2_privatekeys.append(load_private_key(os.path.join(key_dir, "st2r.pem"), args.signing_type))
     with open(os.path.join(args.keys_dir, "hmac.bin"), "rb") as f:
         hmac_key = f.read()
 
