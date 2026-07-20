@@ -10,78 +10,118 @@ import ctypes
 import json
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
-from sbl1 import SBL1, load_sbl1_json_into_struct
-from st2 import ST2
+from sbl1 import SBL1RSA, SBL1ECDSA, load_sbl1_json_into_struct
+from st2 import ST2RSA, ST2ECDSA
 
 RSA_MOD_SIZE = 0x100
 RSA_EXP_SIZE = 0x4
 
-def load_private_key(path):
+def load_private_key(path, sign_type):
     with open(path, "rb") as f:
         pem = f.read()
     key = serialization.load_pem_private_key(pem, password=None)
-    if not isinstance(key, rsa.RSAPrivateKey) or key.key_size != RSA_MOD_SIZE * 8:
-        raise ValueError(f"Expected RSA-{RSA_MOD_SIZE * 8} private key: {path}")
     return key
 
-def pubkey_blob(pub):
+def pubkey_blob(pub, sign_type):
     n = pub.public_numbers()
-    return struct.pack(
-        f"<I{RSA_MOD_SIZE}sI{RSA_EXP_SIZE}s",
-        RSA_MOD_SIZE, n.n.to_bytes(RSA_MOD_SIZE, "little"),
-        RSA_EXP_SIZE, n.e.to_bytes(RSA_EXP_SIZE, "little"),
-    )
+    if sign_type == 0:
+        return struct.pack(
+            f"<I{RSA_MOD_SIZE}sI{RSA_EXP_SIZE}s",
+            RSA_MOD_SIZE, n.n.to_bytes(RSA_MOD_SIZE, "little"),
+            RSA_EXP_SIZE, n.e.to_bytes(RSA_EXP_SIZE, "little"),
+        )
+    return b"\x00" * 20 + n.x.to_bytes(48, byteorder="big") + b"\x00" * 20 + n.y.to_bytes(48, byteorder="big") + (b"\x00" * 388)
 
 def sign_pss(key, data):
     return key.sign(data, padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=0x20), hashes.SHA256())[::-1]
 
-def header_digest(data):
-    return hashlib.sha256(data[0x10:]).digest()[:4]
+def generate_padded_signature(r, s):
+    r_bytes = r.to_bytes(48, byteorder="big")
+    s_bytes = s.to_bytes(48, byteorder="big")
+    r_padded = b"\x00" * 20 + r_bytes
+    s_padded = b"\x00" * 20 + s_bytes
+    return r_padded + s_padded
 
-def sign_st1(data, st1_privatekey, st2_publickey, hmac_key, rb_count, json_path):
-    sbl1 = SBL1.from_buffer(data)
+def sign_ecdsa_p384(key, data):
+    signature = key.sign(data, ec.ECDSA(utils.Prehashed(hashes.SHA512())))
+    r, s = decode_dss_signature(signature)
+    return generate_padded_signature(r, s)
+
+def header_digest(data, sign_type):
+    if sign_type == 0:
+        return hashlib.sha256(data[0x10:]).digest()[:4]
+    return hashlib.sha512(data[0x10:]).digest()[:4]
+
+def sign_st1(data, sign_type, st1_privatekey, st2_privatekeys, hmac_key, rb_count, json_path):
+    if sign_type == 0:
+        sbl1 = SBL1RSA.from_buffer(data)
+    else:
+        sbl1 = SBL1ECDSA.from_buffer(data)
     if json_path is not None:
         with open(json_path) as f:
             j = json.load(f)
         load_sbl1_json_into_struct(sbl1, j)
  
-    st1_publickey = pubkey_blob(st1_privatekey.public_key())
+    st1_publickey = pubkey_blob(st1_privatekey.public_key(), sign_type)
     sbl1.checksum = 0
     sbl1.time = int(time.time())
     if rb_count is not None:
         sbl1.rb_count = rb_count
-    sbl1.st2_publickey[:] = st2_publickey
+    if sign_type == 0:
+        sbl1.st2_publickey[:] = pubkey_blob(st2_privatekeys[0].public_key(), sign_type)
+    else:
+        sbl1.st2_key_tee[:] = pubkey_blob(st2_privatekeys[0].public_key(), sign_type)
+        sbl1.st2_key_ree[:] = pubkey_blob(st2_privatekeys[1].public_key(), sign_type)
     sbl1.st1_publickey[:] = st1_publickey
-    sbl1.hmac[:] = hmac.digest(hmac_key, st1_publickey, "sha256")
-    sbl1.signature[:] = sign_pss(st1_privatekey, memoryview(data)[:SBL1.st1_publickey.offset])
-    sbl1.checksum = int.from_bytes(header_digest(data), "little")
+    if sign_type == 0:
+        sbl1.hmac[:] = hmac.digest(hmac_key, st1_publickey, hashlib.sha256)
+        sbl1.signature[:] = sign_pss(st1_privatekey, memoryview(data)[:SBL1RSA.st1_publickey.offset])
+    else:
+        sbl1.hmac[:] = hmac.digest(hmac_key, st1_publickey[:136], hashlib.sha512)[:32]
+        sbl1.signature[:] = sign_ecdsa_p384(st1_privatekey, hashlib.sha512(memoryview(data)[:SBL1ECDSA.signature.offset]).digest())
+    sbl1.checksum = int.from_bytes(header_digest(data, sign_type), "little")
     return data
 
-def sign_st2(data, st2_privatekey, rb_count, update_header):
+# todo ECDSA
+def sign_st2(data, sign_type, st2_privatekey, rb_count, update_header):
     if update_header:
         data[4:8] = bytes(4)
-    footer = ST2.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2):])
+    if sign_type == 0:
+        footer = ST2RSA.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2RSA):])
+    else:
+        footer = ST2ECDSA.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2ECDSA):])
     if rb_count is not None:
         footer.rb_count = rb_count
-    footer.signature[:] = sign_pss(st2_privatekey, memoryview(data)[:len(data) - 0x100])
+    if sign_type == 0:
+        footer.signature[:] = sign_pss(st2_privatekey, memoryview(data)[:len(data) - 0x100])
+    else:
+        footer.signature[:] = sign_ecdsa_p384(st2_privatekey, hashlib.sha512(memoryview(data)[:len(data) - 0x200]).digest())
     if update_header:
-        data[4:8] = header_digest(data)
+        data[4:8] = header_digest(data, sign_type)
     return data
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Exynos CodeSigner comaptible v4, RSA-PSS")
+    ap = argparse.ArgumentParser(description="Exynos CodeSigner")
     ap.add_argument("input_file", help="Path to the image to sign")
     ap.add_argument("keys_dir",  help="Directory containing the signing keys (hmac.bin, st1.pem, st2.pem)")
     ap.add_argument("stage", choices=["st1", "st2"], help="Signing stage")
     ap.add_argument("--sbl1-json", help="sbl1.json file containing BL1 signature information (ST1 only)")
     ap.add_argument("--update-header", action="store_true", help="Image requires updated header checksum (ST2 only)")
     ap.add_argument("--rb-count", type=int, default=None, help="Override rb_count of image")
+    ap.add_argument("--signing-type", type=int, default=4, help="Type of signature to use")
+    ap.add_argument("--st2-key-type", type=int, default=0, help="0 = tee, 1 = ree")
     args = ap.parse_args()
 
-    st1_privatekey = load_private_key(os.path.join(args.keys_dir, "st1.pem"))
-    st2_privatekey = load_private_key(os.path.join(args.keys_dir, "st2.pem"))
+    st2_privatekeys = []
+    st1_privatekey = load_private_key(os.path.join(args.keys_dir, "st1.pem"), args.signing_type)
+    if args.signing_type == 0:
+        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2.pem"), args.signing_type))
+    else:
+        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2t.pem"), args.signing_type))
+        st2_privatekeys.append(load_private_key(os.path.join(args.keys_dir, "st2r.pem"), args.signing_type))
     with open(os.path.join(args.keys_dir, "hmac.bin"), "rb") as f:
         hmac_key = f.read()
 
@@ -94,8 +134,8 @@ if __name__ == "__main__":
     if args.stage == "st1":
         if args.sbl1_json is None:
             print("sbl1.json not given, will use info from image.")
-        signed = sign_st1(data, st1_privatekey, pubkey_blob(st2_privatekey.public_key()), hmac_key, args.rb_count, args.sbl1_json)
+        signed = sign_st1(data, args.signing_type, st1_privatekey, st2_privatekeys, hmac_key, args.rb_count, args.sbl1_json)
     else:
-        signed = sign_st2(data, st2_privatekey, args.rb_count, args.update_header)
+        signed = sign_st2(data, args.signing_type, st2_privatekeys[args.st2_key_type], args.rb_count, args.update_header)
     with open(args.input_file, "wb") as f:
         f.write(signed)
