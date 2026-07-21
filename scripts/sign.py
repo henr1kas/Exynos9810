@@ -8,6 +8,7 @@ import struct
 import time
 import ctypes
 import json
+import subprocess
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
@@ -15,6 +16,13 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from sbl1 import SBL1RSA, SBL1ECDSA, load_sbl1_json_into_struct
 from st2 import ST2RSA, ST2ECDSA
+
+def get_target_boundary(data):
+    if len(data) >= 0x40:
+        footer = data[-0x40:]
+        if footer[:4] == b"AVBf":
+            return struct.unpack_from(">Q", footer, 12)[0]
+    return len(data)
 
 RSA_MOD_SIZE = 0x100
 RSA_EXP_SIZE = 0x4
@@ -85,20 +93,22 @@ def sign_st1(data, sign_type, st1_privatekey, st2_privatekeys, hmac_key, rb_coun
     sbl1.checksum = int.from_bytes(header_digest(data, sign_type), "little")
     return data
 
-# todo ECDSA
-def sign_st2(data, sign_type, st2_privatekey, rb_count, update_header):
+def sign_st2(data, sign_type, st2_privatekey, rb_count, update_header, has_avb):
+    size_no_avb = len(data)
+    if has_avb:
+        size_no_avb = get_target_boundary(data)
     if update_header:
         data[4:8] = bytes(4)
     if sign_type == 0:
-        footer = ST2RSA.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2RSA):])
+        footer = ST2RSA.from_buffer(memoryview(data)[size_no_avb - ctypes.sizeof(ST2RSA):size_no_avb])
     else:
-        footer = ST2ECDSA.from_buffer(memoryview(data)[len(data) - ctypes.sizeof(ST2ECDSA):])
+        footer = ST2ECDSA.from_buffer(memoryview(data)[size_no_avb - ctypes.sizeof(ST2ECDSA):size_no_avb])
     if rb_count is not None:
         footer.rb_count = rb_count
     if sign_type == 0:
-        footer.signature[:] = sign_pss(st2_privatekey, memoryview(data)[:len(data) - 0x100])
+        footer.signature[:] = sign_pss(st2_privatekey, memoryview(data)[:size_no_avb - 0x100])
     else:
-        footer.signature[:] = sign_ecdsa_p384(st2_privatekey, hashlib.sha512(memoryview(data)[:len(data) - 0x200]).digest())
+        footer.signature[:] = sign_ecdsa_p384(st2_privatekey, hashlib.sha512(memoryview(data)[:size_no_avb - 0x200]).digest())
     if update_header:
         data[4:8] = header_digest(data, sign_type)
     return data
@@ -113,7 +123,11 @@ if __name__ == "__main__":
     ap.add_argument("--rb-count", type=int, default=None, help="Override rb_count of image")
     ap.add_argument("--signing-type", type=int, default=4, help="Type of signature to use")
     ap.add_argument("--st2-key-type", type=int, default=0, help="V5 only. 0 = tee, 1 = ree")
+    ap.add_argument("--avb-partition-name", type=str, default="", help="AVB partition name, skip if not given")
+    ap.add_argument("--avb-partition-size", type=int, default=0, help="AVB partition padding size")
     args = ap.parse_args()
+
+    has_avb = args.avb_partition_name != ""
 
     key_dir = os.path.join(args.keys_dir, str(args.signing_type))
     st2_privatekeys = []
@@ -133,10 +147,19 @@ if __name__ == "__main__":
 
     name = os.path.basename(args.input_file)
     if args.stage == "st1":
-        if args.sbl1_json is None:
-            print("sbl1.json not given, will use info from image.")
         signed = sign_st1(data, args.signing_type, st1_privatekey, st2_privatekeys, hmac_key, args.rb_count, args.sbl1_json)
     else:
-        signed = sign_st2(data, args.signing_type, st2_privatekeys[args.st2_key_type], args.rb_count, args.update_header)
+        signed = sign_st2(data, args.signing_type, st2_privatekeys[args.st2_key_type], args.rb_count, args.update_header, has_avb)
     with open(args.input_file, "wb") as f:
         f.write(signed)
+
+    if has_avb:
+        subprocess.run([
+            "python", "scripts/avbtool.py", "add_hash_footer",
+            "--image", args.input_file,
+            "--partition_name", args.avb_partition_name,
+            "--partition_size", str(args.avb_partition_size),
+            "--key", os.path.join(args.keys_dir, "avb.pem"),
+            "--algorithm", "SHA256_RSA4096",
+            "--salt", "0000000000000000000000000000000000000000000000000000000000000000",
+        ], check=True)
