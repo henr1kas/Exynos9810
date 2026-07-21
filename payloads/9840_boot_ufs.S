@@ -2,9 +2,8 @@
 .global _start
 
 _start:
-    adr     x0, loader
-    br      x0
-    .zero   0x2FF8
+    b       loader
+    .zero   0x2FFC
 
 loader:
     mov     w1, #2
@@ -35,28 +34,25 @@ loader:
     ldur    w1, [x2, #-8]
     and     w1, w1, #0xFFFFFF
     and     w1, w1, #0xFFFFFF0F
-    movz    w4, #0x0010
-    movk    w4, #0xCB00, lsl #16
-    orr     w1, w1, w4
+    movz    w0, #0x0010
+    movk    w0, #0xCB00, lsl #16
+    orr     w1, w1, w0
     stur    w1, [x2, #-8]
 
     mov     w0, #1
-    mov     x3, #0x54B8
-    blr     x3
-    and     w0, w0, #0xFF
+    mov     x1, #0x54B8
+    blr     x1
     cmp     w0, #1
     b.ne    fail
 
     mov     w0, w19
     mov     x1, #0xB5F4
     blr     x1
-    and     w0, w0, #0xFF
     cmp     w0, #1
     b.ne    fail
 
     mov     x0, #0x21A0
     blr     x0
-    and     w0, w0, #0xFF
     cmp     w0, #1
     b.ne    fail
 
@@ -78,6 +74,5 @@ loader:
 
 fail:
     b       fail
-
 efuse:
     .incbin "st1.efuse"
